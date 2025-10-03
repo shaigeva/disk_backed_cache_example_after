@@ -5,39 +5,39 @@ Implementing a two-tier LRU cache for Pydantic objects with in-memory and SQLite
 Each step is a complete, testable capability with its own tests.
 
 ## Progress Tracking
-- [ ] Step 1: In-Memory Cache - Basic Put/Get
-- [ ] Step 2: Key Validation
-- [ ] Step 3: Model Type Validation
-- [ ] Step 4: Serialization/Deserialization
-- [ ] Step 5: SQLite Connection Setup
-- [ ] Step 6: SQLite Put/Get Operations
-- [ ] Step 7: Delete Operation - Memory
-- [ ] Step 8: Delete Operation - SQLite
-- [ ] Step 9: Contains Check (not exists)
-- [ ] Step 10: Memory Count Tracking
-- [ ] Step 11: SQLite Count Tracking
-- [ ] Step 12: Memory Size Tracking
-- [ ] Step 13: SQLite Size Tracking
-- [ ] Step 14: Timestamp Storage
-- [ ] Step 15: Schema Version Storage
-- [ ] Step 16: Schema Version Validation
-- [ ] Step 17: Memory LRU - Count-Based Eviction
-- [ ] Step 18: Memory LRU - Size-Based Eviction
-- [ ] Step 19: SQLite LRU - Count-Based Eviction
-- [ ] Step 20: SQLite LRU - Size-Based Eviction
-- [ ] Step 21: Two-Tier Coordination - Put
-- [ ] Step 22: Two-Tier Coordination - Get with Promotion
-- [ ] Step 23: Max Item Size for Disk-Only Storage
-- [ ] Step 24: Cascading Eviction (Disk→Memory)
-- [ ] Step 25: Memory TTL Check
-- [ ] Step 26: Disk TTL Check
-- [ ] Step 27: Custom Timestamp Parameter
-- [ ] Step 28: Clear Operation
-- [ ] Step 29: Close Operation
-- [ ] Step 30: Basic Thread Safety (Read-Write Locks)
-- [ ] Step 31: LRU Tie-Breaking (Alphabetical)
-- [ ] Step 32: Logging at TRACE Level
-- [ ] Step 33: Edge Cases & Error Handling
+- [x] Step 1: In-Memory Cache - Basic Put/Get
+- [x] Step 2: Key Validation
+- [x] Step 3: Model Type Validation
+- [x] Step 4: Serialization/Deserialization
+- [x] Step 5: SQLite Connection Setup
+- [x] Step 6: SQLite Put/Get Operations
+- [x] Step 7: Delete Operation - Memory
+- [x] Step 8: Delete Operation - SQLite
+- [x] Step 9: Contains Check (not exists)
+- [x] Step 10: Memory Count Tracking
+- [x] Step 11: SQLite Count Tracking
+- [x] Step 12: Memory Size Tracking
+- [x] Step 13: SQLite Size Tracking
+- [x] Step 14: Timestamp Storage
+- [x] Step 15: Schema Version Storage
+- [x] Step 16: Schema Version Validation
+- [x] Step 17: Memory LRU - Count-Based Eviction
+- [x] Step 18: Memory LRU - Size-Based Eviction
+- [x] Step 19: SQLite LRU - Count-Based Eviction
+- [x] Step 20: SQLite LRU - Size-Based Eviction
+- [x] Step 21: Two-Tier Coordination - Put
+- [x] Step 22: Two-Tier Coordination - Get with Promotion
+- [x] Step 23: Max Item Size for Disk-Only Storage
+- [x] Step 24: Cascading Eviction (Disk→Memory)
+- [x] Step 25: Memory TTL Check
+- [x] Step 26: Disk TTL Check
+- [x] Step 27: Custom Timestamp Parameter
+- [x] Step 28: Clear Operation
+- [x] Step 29: Close Operation
+- [x] Step 30: Basic Thread Safety (Read-Write Locks)
+- [x] Step 31: LRU Tie-Breaking (Alphabetical)
+- [x] Step 32: Logging at TRACE Level
+- [x] Step 33: Edge Cases & Error Handling
 
 ## Detailed Steps
 
