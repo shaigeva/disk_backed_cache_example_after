@@ -8,84 +8,115 @@ This is a disk-backed cache implementation project for Pydantic objects, featuri
 
 The project follows the specification in `spec.md`.
 
-Implementation follows the plan in `IMPLEMENTATION_PLAN.md` - and progress is updated there.
-You should update the implementation plan after finishing every single step. Don't do several steps together and only then update it.
+### **Implementing steps**
+All these MUST be followed:
+- Implementation MUST follow the sequence in `IMPLEMENTATION_PLAN.md`
+- **Requirements source**: Get detailed behavior requirements from `spec.md`, NOT from IMPLEMENTATION_PLAN.md
+- Implement steps in order
+- **Implement EXACTLY ONE step at a time - NEVER implement multiple steps together, even if they seem related or similar**
+- 🚨 **ONE STEP ONLY: Even if steps 7 & 8 are both "Delete operations", implement them separately**. **Even if it feels inefficient or slow, ONE STEP AT A TIME is mandatory.** **No exceptions. No batching. No grouping. ONE STEP ONLY.**
+- **NO BATCHING: Do not group steps together for "efficiency" - this violates the one-step rule**
+- Implementation of "one step" includes: planning, implementing code and tests, running validations, and committing
+- Update progress in `IMPLEMENTATION_PLAN.md`. After each step, mark it as done.
+- Never skip steps.
+- You are allowed to finish implementing the plan, even if you need to compact the conversation.
+
+Do not stop between steps to ask for user confirmation or feedback, unless you encounter a problem you cannot solve.
+
+### **Commit Message Format**
+
+Keep commit messages concise:
+```
+Step X: [Short title]
+
+[One line summary of changes]
+
+🤖 Generated with Claude Code
+```
+- DO NOT specify "Co-Authored-By"
+
+Example:
+```
+Step 12: Memory Size Tracking
+
+Add size tracking for in-memory cache items.
+
+🤖 Generated with Claude Code
+```
+
+### **How to implement each step**
+
+**Work through these 3 sub-steps sequentially:**
+
+1. **Plan** - Read `spec.md` for this step's requirements. Describe the behavior to implement in detail. Design tests for the new behavior. Identify if any existing tests need updates to cover modified functionality.
+
+2. **Implement** - Write the code and all tests together. Include updates to existing tests if identified in planning.
+
+3. **Validate and commit** - Run `./devtools/run_all_agent_validations.sh` and fix any failures. Repeat until all validations pass (zero errors, zero warnings). Once passing, commit the work and update `IMPLEMENTATION_PLAN.md`.
+
+**Progress Tracking:**
+- Use clear markdown comments to show progress (e.g., `## Step 5 Plan: SQLite Connection Setup`)
+- Do NOT use TodoWrite for step tracking (wastes tokens)
+- Only use TodoWrite if a single step has >5 complex sub-tasks or user explicitly requests it
 
 ## Development Guidelines
 
-### **Development Workflow Quick Start**
-```bash
-# 1. Validations
-./devtools/run_all_agent_validations.sh    # Always run before responding
-uv run pytest tests/test_specific.py -v       # Run specific tests for faster feedback
+### **Validation Strategy**
 
-# 2. Common Commands
-git status                                  # Check working directory
-```
+Run `./devtools/run_all_agent_validations.sh` during the "Validate and commit" sub-step.
 
-
-### **Testing & Validations Strategy**
-**IMPORTANT**:
-After ANY change, before responding to the user and before moving to the next sub-task or next task, 
-the `./devtools/run_all_agent_validations.sh` must pass without any errors or warnings.
-Don't accept any errors or warnings unless you failed fixing them.
-
-All changes must pass full validation suite before user response.
-
-In order to finish every task and sub-task, you must run `./devtools/run_all_agent_validations.sh`.
-You must never move to the next sub-task before running `./devtools/run_all_agent_validations.sh` and getting a result
-without errors or warnings.
-
-
-🚨🚨🚨 ABSOLUTE ZERO TOLERANCE POLICY 🚨🚨🚨
-**EVERY SINGLE TEST MUST PASS. EVERY SINGLE WARNING MUST BE FIXED.**
-**🔥 BEFORE RESPONDING TO USER 🔥**
-**YOU MUST ACHIEVE 100% SUCCESS ON ALL OF THESE:**
-
-`./devtools/run_all_agent_validations.sh`
+🚨 **ABSOLUTE ZERO TOLERANCE POLICY** 🚨
 - ZERO test failures
-- ZERO linting errors  
+- ZERO linting errors
 - ZERO type errors
 - ZERO warnings
 
-### **🔧 WHEN ANYTHING FAILS 🔧**
+### **When Validation Fails**
 
-1. **STOP IMMEDIATELY**
-2. **FIX THE ROOT CAUSE** (no workarounds)
-3. **RE-RUN ALL VALIDATIONS**
-4. **REPEAT UNTIL 100% SUCCESS**
-5. **ONLY THEN** respond to user
+**Critical: Think before changing tests**
 
-**THERE ARE NO EXCEPTIONS TO THESE RULES.**
+When fixing validation failures, follow this process:
 
-**✅ THERE ARE ONLY 2 ACCEPTABLE OUTCOMES ✅**
-- All tests and validations pass as-is.
-- You've tried to fix the errors and failed.
+1. **Identify the failure** - What exactly is failing? (test, type check, lint, etc.)
 
+2. **Check the spec first** - Before changing ANY code or test:
+   - Re-read the relevant section of `spec.md`
+   - Confirm what the correct behavior should be
+   - Verify your understanding matches the spec
 
-If you failed fixing, stop and tell the user.
+3. **Determine the fix**:
+   - If test fails because **code is wrong**: Fix the code to match spec
+   - If test fails because **test expectation is wrong**: Verify against spec, then fix test
+   - **Never** change test expectations just to make tests pass without re-confirming against spec
+
+4. **Common mistake to avoid**:
+   - ❌ Test fails → change test expectation → test passes → commit
+   - ✅ Test fails → check spec → fix code to match spec → test passes → commit
+
+5. **Apply fix and re-run** - Run validations again until passing
+
+**Rule: Both code AND tests must match the spec. If validation passes and both match spec, commit immediately.**
 
 ### **🚫 FORBIDDEN PHRASES 🚫**
 
 **NEVER SAY:**
 - "Some tests are skipped but acceptable"
-- "Only minor warnings remain"  
+- "Only minor warnings remain"
 - "Most tests pass"
 - "Timing issues are expected"
 - "This is acceptable"
 - "Tests pass in isolation but fail in parallel"
-- "Serial mode fixes the problem"
-- "Parallel execution timing issues"
-- "Race conditions are expected"
 
-
+**✅ ONLY 2 ACCEPTABLE OUTCOMES ✅**
+- All tests and validations pass
+- You've tried to fix the errors and failed (then tell the user)
 
 ## **Core Development Principles**
 - **One Change = One Complete, testable Capability**
 - **Validation-Driven Development** (every change must pass all validations)
 - **Test-First Implementation** (behavior tests that target the API of the package are Priority 1)
 - **No Layer-Based Changes**. Complete capabilities only - DO NOT implement multiple distinct capabilities in the same change. DO implement a capability and all its tests before continuing to the next capability.
-- **Before finishing a task, sub-task or todo, make sure all new or changed behaviors have tests that cover them well**
+- **Before committing, make sure all new or changed behaviors have tests that cover them well**
 
 ### **Small parts principle**
 Prefer breaking down functionality into small capabilities that are individually testable.

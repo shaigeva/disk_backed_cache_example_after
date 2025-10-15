@@ -1,15 +1,20 @@
+"""Tests for count and size tracking."""
+
 from disk_backed_cache_example.disk_backed_cache import CacheableModel, DiskBackedCache
 
 
-class SampleModel(CacheableModel):
+class TrackModel(CacheableModel):
+    """Model for tracking tests."""
+
     schema_version: str = "1.0.0"
-    name: str
+    data: str
 
 
-def test_memory_count_increases_on_put(db_path: str) -> None:
+def test_get_count_starts_at_zero(db_path: str) -> None:
+    """Initial count should be zero."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=TrackModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -19,23 +24,16 @@ def test_memory_count_increases_on_put(db_path: str) -> None:
         max_item_size_bytes=10 * 1024,
     )
 
-    assert cache._memory_count == 0
-
-    obj = SampleModel(name="test1")
-    cache.put("key1", obj)
-    assert cache._memory_count == 1
-
-    obj2 = SampleModel(name="test2")
-    cache.put("key2", obj2)
-    assert cache._memory_count == 2
+    assert cache.get_count() == 0
 
     cache.close()
 
 
-def test_memory_count_decreases_on_delete(db_path: str) -> None:
+def test_get_count_increases_after_put(db_path: str) -> None:
+    """Count should increase when items are added."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=TrackModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -45,25 +43,73 @@ def test_memory_count_decreases_on_delete(db_path: str) -> None:
         max_item_size_bytes=10 * 1024,
     )
 
-    obj1 = SampleModel(name="test1")
-    obj2 = SampleModel(name="test2")
-    cache.put("key1", obj1)
-    cache.put("key2", obj2)
-    assert cache._memory_count == 2
+    cache.put("key1", TrackModel(data="test1"))
+    assert cache.get_count() == 1
+
+    cache.put("key2", TrackModel(data="test2"))
+    assert cache.get_count() == 2
+
+    cache.put("key3", TrackModel(data="test3"))
+    assert cache.get_count() == 3
+
+    cache.close()
+
+
+def test_get_count_does_not_increase_on_overwrite(db_path: str) -> None:
+    """Count should not increase when overwriting existing key."""
+    cache = DiskBackedCache(
+        db_path=db_path,
+        model=TrackModel,
+        max_memory_items=10,
+        max_memory_size_bytes=1024 * 1024,
+        max_disk_items=100,
+        max_disk_size_bytes=10 * 1024 * 1024,
+        memory_ttl_seconds=60.0,
+        disk_ttl_seconds=3600.0,
+        max_item_size_bytes=10 * 1024,
+    )
+
+    cache.put("key1", TrackModel(data="test1"))
+    assert cache.get_count() == 1
+
+    cache.put("key1", TrackModel(data="test1_updated"))
+    assert cache.get_count() == 1
+
+    cache.close()
+
+
+def test_get_count_decreases_after_delete(db_path: str) -> None:
+    """Count should decrease when items are deleted."""
+    cache = DiskBackedCache(
+        db_path=db_path,
+        model=TrackModel,
+        max_memory_items=10,
+        max_memory_size_bytes=1024 * 1024,
+        max_disk_items=100,
+        max_disk_size_bytes=10 * 1024 * 1024,
+        memory_ttl_seconds=60.0,
+        disk_ttl_seconds=3600.0,
+        max_item_size_bytes=10 * 1024,
+    )
+
+    cache.put("key1", TrackModel(data="test1"))
+    cache.put("key2", TrackModel(data="test2"))
+    assert cache.get_count() == 2
 
     cache.delete("key1")
-    assert cache._memory_count == 1
+    assert cache.get_count() == 1
 
     cache.delete("key2")
-    assert cache._memory_count == 0
+    assert cache.get_count() == 0
 
     cache.close()
 
 
-def test_memory_count_accurate(db_path: str) -> None:
+def test_get_count_includes_disk_items(db_path: str) -> None:
+    """Count should include items stored on disk."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=TrackModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -73,20 +119,25 @@ def test_memory_count_accurate(db_path: str) -> None:
         max_item_size_bytes=10 * 1024,
     )
 
-    # Add multiple items
-    for i in range(5):
-        cache.put(f"key{i}", SampleModel(name=f"test{i}"))
+    # Add items
+    cache.put("key1", TrackModel(data="test1"))
+    cache.put("key2", TrackModel(data="test2"))
 
-    assert cache._memory_count == 5
-    assert cache._memory_count == len(cache._memory_cache)
+    # Clear memory but keep disk
+    cache._memory_cache.clear()  # type: ignore[attr-defined]
+    cache._memory_item_count = 0  # type: ignore[attr-defined]
+
+    # Count should still be 2 (from disk)
+    assert cache.get_count() == 2
 
     cache.close()
 
 
-def test_memory_size_tracking_on_put(db_path: str) -> None:
+def test_get_total_size_starts_at_zero(db_path: str) -> None:
+    """Initial size should be zero."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=TrackModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -96,21 +147,16 @@ def test_memory_size_tracking_on_put(db_path: str) -> None:
         max_item_size_bytes=10 * 1024,
     )
 
-    assert cache._memory_total_size == 0
-
-    obj = SampleModel(name="test")
-    expected_size = len(obj.model_dump_json())
-
-    cache.put("key1", obj)
-    assert cache._memory_total_size == expected_size
+    assert cache.get_total_size() == 0
 
     cache.close()
 
 
-def test_memory_size_tracking_on_delete(db_path: str) -> None:
+def test_get_total_size_increases_after_put(db_path: str) -> None:
+    """Size should increase when items are added."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=TrackModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -120,46 +166,52 @@ def test_memory_size_tracking_on_delete(db_path: str) -> None:
         max_item_size_bytes=10 * 1024,
     )
 
-    obj = SampleModel(name="test")
-    cache.put("key1", obj)
-    initial_size = cache._memory_total_size
+    cache.put("key1", TrackModel(data="test1"))
+    size1 = cache.get_total_size()
+    assert size1 > 0
+
+    cache.put("key2", TrackModel(data="test2"))
+    size2 = cache.get_total_size()
+    assert size2 > size1
+
+    cache.close()
+
+
+def test_get_total_size_decreases_after_delete(db_path: str) -> None:
+    """Size should decrease when items are deleted."""
+    cache = DiskBackedCache(
+        db_path=db_path,
+        model=TrackModel,
+        max_memory_items=10,
+        max_memory_size_bytes=1024 * 1024,
+        max_disk_items=100,
+        max_disk_size_bytes=10 * 1024 * 1024,
+        memory_ttl_seconds=60.0,
+        disk_ttl_seconds=3600.0,
+        max_item_size_bytes=10 * 1024,
+    )
+
+    cache.put("key1", TrackModel(data="test1"))
+    cache.put("key2", TrackModel(data="test2"))
+    size_before = cache.get_total_size()
 
     cache.delete("key1")
-    assert cache._memory_total_size == 0
-    assert cache._memory_total_size < initial_size
+    size_after = cache.get_total_size()
+
+    assert size_after < size_before
+    assert size_after > 0
+
+    cache.delete("key2")
+    assert cache.get_total_size() == 0
 
     cache.close()
 
 
-def test_memory_total_size_accurate(db_path: str) -> None:
+def test_get_total_size_includes_disk_items(db_path: str) -> None:
+    """Size should include items stored on disk."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
-        max_memory_items=10,
-        max_memory_size_bytes=1024 * 1024,
-        max_disk_items=100,
-        max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=60.0,
-        disk_ttl_seconds=3600.0,
-        max_item_size_bytes=10 * 1024,
-    )
-
-    # Add multiple items and calculate expected size
-    expected_size = 0
-    for i in range(3):
-        obj = SampleModel(name=f"test{i}")
-        expected_size += len(obj.model_dump_json())
-        cache.put(f"key{i}", obj)
-
-    assert cache._memory_total_size == expected_size
-
-    cache.close()
-
-
-def test_sqlite_count_query_returns_correct_value(db_path: str) -> None:
-    cache = DiskBackedCache(
-        db_path=db_path,
-        model=SampleModel,
+        model=TrackModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -170,121 +222,15 @@ def test_sqlite_count_query_returns_correct_value(db_path: str) -> None:
     )
 
     # Add items
-    for i in range(3):
-        cache.put(f"key{i}", SampleModel(name=f"test{i}"))
-
-    # Check disk count directly
-    cursor = cache._conn.execute("SELECT COUNT(*) FROM cache")
-    disk_count = cursor.fetchone()[0]
-    assert disk_count == 3
-
-    cache.close()
-
-
-def test_total_count_includes_both_tiers(db_path: str) -> None:
-    cache = DiskBackedCache(
-        db_path=db_path,
-        model=SampleModel,
-        max_memory_items=10,
-        max_memory_size_bytes=1024 * 1024,
-        max_disk_items=100,
-        max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=60.0,
-        disk_ttl_seconds=3600.0,
-        max_item_size_bytes=10 * 1024,
-    )
-
-    # Add items (they'll be in both memory and disk)
-    for i in range(3):
-        cache.put(f"key{i}", SampleModel(name=f"test{i}"))
-
-    # Total count should be memory + disk
-    # But since items are in both, we're counting duplicates for now
-    # This is expected behavior until we implement proper two-tier coordination
-    total_count = cache.get_count()
-    assert total_count == 6  # 3 in memory + 3 on disk
-
-    cache.close()
-
-
-def test_sqlite_stores_size_metadata(db_path: str) -> None:
-    cache = DiskBackedCache(
-        db_path=db_path,
-        model=SampleModel,
-        max_memory_items=10,
-        max_memory_size_bytes=1024 * 1024,
-        max_disk_items=100,
-        max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=60.0,
-        disk_ttl_seconds=3600.0,
-        max_item_size_bytes=10 * 1024,
-    )
-
-    obj = SampleModel(name="test")
-    expected_size = len(obj.model_dump_json())
-
-    cache.put("key1", obj)
-
-    # Check that size is stored in database
-    cursor = cache._conn.execute("SELECT size FROM cache WHERE key = ?", ("key1",))
-    row = cursor.fetchone()
-    assert row is not None
-    assert row[0] == expected_size
-
-    cache.close()
-
-
-def test_sqlite_total_size_query(db_path: str) -> None:
-    cache = DiskBackedCache(
-        db_path=db_path,
-        model=SampleModel,
-        max_memory_items=10,
-        max_memory_size_bytes=1024 * 1024,
-        max_disk_items=100,
-        max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=60.0,
-        disk_ttl_seconds=3600.0,
-        max_item_size_bytes=10 * 1024,
-    )
-
-    # Add items
-    expected_disk_size = 0
-    for i in range(3):
-        obj = SampleModel(name=f"test{i}")
-        expected_disk_size += len(obj.model_dump_json())
-        cache.put(f"key{i}", obj)
-
-    # Check disk size directly
-    cursor = cache._conn.execute("SELECT SUM(size) FROM cache")
-    disk_size = cursor.fetchone()[0]
-    assert disk_size == expected_disk_size
-
-    cache.close()
-
-
-def test_combined_size_both_tiers(db_path: str) -> None:
-    cache = DiskBackedCache(
-        db_path=db_path,
-        model=SampleModel,
-        max_memory_items=10,
-        max_memory_size_bytes=1024 * 1024,
-        max_disk_items=100,
-        max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=60.0,
-        disk_ttl_seconds=3600.0,
-        max_item_size_bytes=10 * 1024,
-    )
-
-    # Add items
-    expected_size = 0
-    for i in range(3):
-        obj = SampleModel(name=f"test{i}")
-        expected_size += len(obj.model_dump_json())
-        cache.put(f"key{i}", obj)
-
-    # Total size should be memory + disk
-    # Items are in both, so we're counting duplicates for now
+    cache.put("key1", TrackModel(data="test1"))
+    cache.put("key2", TrackModel(data="test2"))
     total_size = cache.get_total_size()
-    assert total_size == expected_size * 2  # Both memory and disk
+
+    # Clear memory but keep disk
+    cache._memory_cache.clear()  # type: ignore[attr-defined]
+    cache._memory_total_size = 0  # type: ignore[attr-defined]
+
+    # Size should still be the same (from disk)
+    assert cache.get_total_size() == total_size
 
     cache.close()

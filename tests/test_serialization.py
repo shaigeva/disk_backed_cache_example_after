@@ -1,23 +1,27 @@
+"""Tests for serialization and deserialization."""
+
+import json
+from typing import cast
+
+import pytest
+
 from disk_backed_cache_example.disk_backed_cache import CacheableModel, DiskBackedCache
 
 
-class SampleModel(CacheableModel):
+class SerializableModel(CacheableModel):
+    """Model for serialization tests."""
+
     schema_version: str = "1.0.0"
     name: str
-    value: int
+    count: int
+    active: bool
 
 
-class NestedModel(CacheableModel):
-    schema_version: str = "1.0.0"
-    title: str
-    data: dict[str, int]
-    items: list[str]
-
-
-def test_serialized_object_can_be_deserialized(db_path: str) -> None:
+def test_serialize_model_to_json(db_path: str) -> None:
+    """Serializing a model should produce valid JSON."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=SerializableModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -27,20 +31,24 @@ def test_serialized_object_can_be_deserialized(db_path: str) -> None:
         max_item_size_bytes=10 * 1024,
     )
 
-    obj = SampleModel(name="test", value=42)
-    cache.put("key1", obj)
-    result = cache.get("key1")
+    obj = SerializableModel(name="test", count=42, active=True)
+    json_str = cache._serialize(obj)  # type: ignore[attr-defined]
 
-    assert result is not None
-    assert isinstance(result, SampleModel)
-    assert result.name == "test"
-    assert result.value == 42
+    # Should be valid JSON
+    data = json.loads(json_str)
+    assert data["schema_version"] == "1.0.0"
+    assert data["name"] == "test"
+    assert data["count"] == 42
+    assert data["active"] is True
+
+    cache.close()
 
 
-def test_size_calculation_from_serialized_json(db_path: str) -> None:
+def test_deserialize_json_to_model(db_path: str) -> None:
+    """Deserializing JSON should produce a valid model."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=SerializableModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -50,24 +58,24 @@ def test_size_calculation_from_serialized_json(db_path: str) -> None:
         max_item_size_bytes=10 * 1024,
     )
 
-    obj = SampleModel(name="test", value=42)
-    serialized = obj.model_dump_json()
-    expected_size = len(serialized)
+    json_str = '{"schema_version":"1.0.0","name":"test","count":42,"active":true}'
+    obj = cache._deserialize(json_str)  # type: ignore[attr-defined]
 
-    cache.put("key1", obj)
+    assert isinstance(obj, SerializableModel)
+    obj_typed = cast(SerializableModel, obj)
+    assert obj_typed.schema_version == "1.0.0"
+    assert obj_typed.name == "test"
+    assert obj_typed.count == 42
+    assert obj_typed.active is True
 
-    # Access internal state to verify size is stored correctly
-    assert "key1" in cache._memory_cache
-    stored_obj, stored_size, _, _ = cache._memory_cache["key1"]
-    assert stored_size == expected_size
-    assert isinstance(stored_obj, SampleModel)
-    assert stored_obj.name == "test"
+    cache.close()
 
 
-def test_complex_nested_object_serialization(db_path: str) -> None:
+def test_roundtrip_serialization(db_path: str) -> None:
+    """Serializing and deserializing should preserve data."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=NestedModel,
+        model=SerializableModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
@@ -77,17 +85,66 @@ def test_complex_nested_object_serialization(db_path: str) -> None:
         max_item_size_bytes=10 * 1024,
     )
 
-    obj = NestedModel(
-        title="complex",
-        data={"a": 1, "b": 2, "c": 3},
-        items=["item1", "item2", "item3"],
+    original = SerializableModel(name="roundtrip", count=99, active=False)
+
+    json_str = cache._serialize(original)  # type: ignore[attr-defined]
+    restored = cache._deserialize(json_str)  # type: ignore[attr-defined]
+
+    assert isinstance(restored, SerializableModel)
+    restored_typed = cast(SerializableModel, restored)
+    assert restored_typed.schema_version == original.schema_version
+    assert restored_typed.name == original.name
+    assert restored_typed.count == original.count
+    assert restored_typed.active == original.active
+
+    cache.close()
+
+
+def test_serialization_size(db_path: str) -> None:
+    """Size calculation should match JSON string length."""
+    cache = DiskBackedCache(
+        db_path=db_path,
+        model=SerializableModel,
+        max_memory_items=10,
+        max_memory_size_bytes=1024 * 1024,
+        max_disk_items=100,
+        max_disk_size_bytes=10 * 1024 * 1024,
+        memory_ttl_seconds=60.0,
+        disk_ttl_seconds=3600.0,
+        max_item_size_bytes=10 * 1024,
     )
 
-    cache.put("key1", obj)
-    result = cache.get("key1")
+    obj = SerializableModel(name="size_test", count=123, active=True)
 
-    assert result is not None
-    assert isinstance(result, NestedModel)
-    assert result.title == "complex"
-    assert result.data == {"a": 1, "b": 2, "c": 3}
-    assert result.items == ["item1", "item2", "item3"]
+    size = cache._calculate_size(obj)  # type: ignore[attr-defined]
+    json_str = cache._serialize(obj)  # type: ignore[attr-defined]
+
+    assert size == len(json_str)
+    assert size > 0
+
+    cache.close()
+
+
+def test_deserialize_invalid_json_raises_error(db_path: str) -> None:
+    """Deserializing invalid JSON should raise ValueError."""
+    cache = DiskBackedCache(
+        db_path=db_path,
+        model=SerializableModel,
+        max_memory_items=10,
+        max_memory_size_bytes=1024 * 1024,
+        max_disk_items=100,
+        max_disk_size_bytes=10 * 1024 * 1024,
+        memory_ttl_seconds=60.0,
+        disk_ttl_seconds=3600.0,
+        max_item_size_bytes=10 * 1024,
+    )
+
+    # Invalid JSON syntax
+    with pytest.raises(ValueError, match="Failed to deserialize JSON"):
+        cache._deserialize("not valid json")  # type: ignore[attr-defined]
+
+    # Valid JSON but wrong schema
+    with pytest.raises(ValueError, match="Failed to deserialize JSON"):
+        cache._deserialize('{"wrong": "fields"}')  # type: ignore[attr-defined]
+
+    cache.close()

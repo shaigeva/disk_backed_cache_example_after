@@ -5,18 +5,21 @@ Build a thread-safe, two-tier LRU cache for Pydantic objects with in-memory and 
 
 ## Project Structure
 ```
-pydantic_cache/
+disk_backed_cache_example/
 ├── __init__.py
-├── cache.py           # Main Cache class
-├── models.py          # CacheableModel base class
-├── storage.py         # DiskBasedCache class
+├── disk_backed_cache.py    # DiskBackedCache class (two-tier cache with SQLite)
 └── tests/
     ├── __init__.py
-    ├── test_cache.py
-    ├── test_eviction.py
-    ├── test_concurrency.py
-    └── test_ttl.py
-    ...
+    ├── test_basic_put_and_get.py
+    ├── test_key_validation.py
+    ├── test_model_type_validation.py
+    ├── test_serialization.py
+    ├── test_sqlite_connection.py
+    ├── test_sqlite_operations.py
+    ├── test_delete_operations.py
+    ├── test_tracking_and_schema.py
+    ├── test_lru_eviction.py
+    └── ...
 ```
 
 ## Dependencies
@@ -48,7 +51,7 @@ pydantic_cache/
 
 ## Core Components
 
-### 1. CacheableModel (models.py)
+### 1. CacheableModel
 
 Base class that all cached Pydantic models must inherit from.
 
@@ -61,9 +64,9 @@ class CacheableModel(BaseModel):
 
 **Purpose**: Ensures all cached objects have a schema version for data evolution tracking.
 
-### 2. DiskBasedCache (storage.py)
+### 2. DiskBackedCache
 
-Handles SQLite persistence with concurrent access.
+Main two-tier cache class that handles both in-memory caching and SQLite persistence with concurrent access.
 
 #### Database Schema
 ```sql
@@ -89,10 +92,11 @@ def __init__(self, db_path: str, expected_schema_version: str)
 ```python
 class DiskBackedCache:
     """
-    SQLite-backed storage for cache objects.
+    Two-tier LRU cache with in-memory and SQLite-backed persistent storage.
 
-    Stores serialized objects with metadata (timestamp, schema_version, size)
-    and provides LRU eviction support.
+    Memory tier stores object references (no serialization) for fast access.
+    Disk tier stores serialized objects with metadata (timestamp, schema_version, size).
+    Provides automatic LRU eviction, TTL expiration, and thread-safe operations.
     """
 
     def __init__(
@@ -132,6 +136,18 @@ class DiskBackedCache:
 
     def close(self) -> None:
         raise NotImplementedError()
+
+    def get_stats(self) -> dict[str, int]:
+        raise NotImplementedError()
+
+    def put_many(self, items: dict[str, CacheableModel], timestamp: Optional[float] = None) -> None:
+        raise NotImplementedError()
+
+    def get_many(self, keys: list[str], timestamp: Optional[float] = None) -> dict[str, CacheableModel]:
+        raise NotImplementedError()
+
+    def delete_many(self, keys: list[str]) -> None:
+        raise NotImplementedError()
 ```
 
 #### Implementation Notes
@@ -141,18 +157,19 @@ class DiskBackedCache:
 - Use parameterized queries to prevent SQL injection
 - Log all operations at TRACE level
 
-### 3. Cache (cache.py)
-Main two-tier cache with in-memory and disk storage.
+#### Initialization Behavior
 
-**Initialization:**
+When `__init__()` is called:
 1. Validates directory exists, creates if needed
-2. Extracts `schema_version` from `model_class`
-3. Creates SQLite database named `{model_class.__name__.lower()}.db`
-4. Initializes in-memory data structures
-5. Sets up thread locks for concurrency
-6. Cleans up invalid items from disk (wrong schema version, exceeding limits)
+2. Extracts `schema_version` from the model class
+3. Creates SQLite database connection
+4. Enables WAL mode
+5. Creates cache table if not exists
+6. Initializes in-memory data structures
+7. Sets up thread locks for concurrency
+8. Cleans up invalid items from disk (wrong schema version, exceeding limits)
 
-#### Public Methods
+#### Method Specifications
 
 ```python
 def get(self, key: str, timestamp: Optional[float] = None) -> Optional[CacheableModel]
@@ -205,6 +222,93 @@ def clear()
 ```
 Removes all items from cache (both memory and disk). Blocks until complete.
 
+```python
+def get_stats() -> dict[str, int]
+```
+Returns cache statistics including hit/miss rates and eviction counts.
+
+**Returns:**
+- Dictionary with keys:
+  - `memory_hits`: Number of successful gets from memory
+  - `disk_hits`: Number of successful gets from disk (not in memory)
+  - `misses`: Number of gets that returned None
+  - `memory_evictions`: Number of items evicted from memory
+  - `disk_evictions`: Number of items evicted from disk
+  - `total_puts`: Number of put operations
+  - `total_gets`: Number of get operations
+  - `total_deletes`: Number of delete operations
+  - `current_memory_items`: Current count in memory
+  - `current_disk_items`: Current count on disk
+
+```python
+def put_many(items: dict[str, CacheableModel], timestamp: Optional[float] = None)
+```
+Atomically store multiple items in the cache.
+
+**Behavior:**
+1. Validates all keys and values first
+2. Uses a single transaction for disk operations
+3. All items succeed or all fail (atomic)
+4. Updates memory cache after successful disk commit
+5. Performs eviction after all items are added
+6. All items use the same timestamp if provided
+7. Each item counts as a separate put operation in statistics (increments `total_puts` by number of items)
+
+**Error Handling:**
+- Invalid key in any item: raises ValueError, no items stored
+- Wrong model type in any item: raises TypeError, no items stored
+- Disk error: rolls back transaction, no items stored
+
+```python
+def get_many(keys: list[str], timestamp: Optional[float] = None) -> dict[str, CacheableModel]
+```
+Retrieve multiple items from cache.
+
+**Behavior:**
+1. Returns dictionary mapping keys to values
+2. Keys not found are omitted from result (not included with None)
+3. Updates hit/miss statistics for each key (each key counts as a separate get operation)
+4. Schema validation applies to each item
+5. Does not update access timestamps
+6. Each key increments `total_gets` by 1, and increments either `memory_hits`, `disk_hits`, or `misses`
+
+**Returns:**
+- Dictionary of found items only (missing keys not included)
+
+```python
+def delete_many(keys: list[str])
+```
+Remove multiple items from cache.
+
+**Behavior:**
+1. Deletes from both memory and disk
+2. Uses single transaction for disk operations
+3. Non-existent keys are silently ignored
+4. Partial success is not possible (atomic)
+5. Each key counts as a separate delete operation in statistics (increments `total_deletes` by number of keys)
+
+
+## Statistics and Metrics
+
+The cache tracks the following metrics:
+- **Hit/Miss Tracking**: Counts for memory hits, disk hits, and misses
+- **Eviction Tracking**: Counts for memory and disk evictions
+- **Operation Counts**: Total puts, gets, and deletes
+- **Current State**: Current item counts in memory and disk
+
+All statistics are thread-safe and updated atomically with their operations.
+
+## Batch Operations
+
+Batch operations provide atomic multi-item operations:
+- **Atomicity**: All items in a batch succeed or all fail
+- **Transaction Safety**: Disk operations use a single transaction
+- **Performance**: Reduced overhead compared to individual operations
+- **Consistency**: All items in a batch use the same timestamp
+- **Statistics**: Each item in a batch is counted individually in operation counters
+  - `put_many(items)` increments `total_puts` by `len(items)`
+  - `get_many(keys)` increments `total_gets` by `len(keys)` and updates hit/miss counters for each key
+  - `delete_many(keys)` increments `total_deletes` by `len(keys)`
 
 ## Key Behaviors
 
@@ -241,10 +345,17 @@ Removes all items from cache (both memory and disk). Blocks until complete.
 
 ## Implementation Order
 
-1. **models.py** - CacheableModel base class (simplest)
-2. **storage.py** - DiskBasedCache storage layer with unit tests
-3. **cache.py** - Main cache logic with integration tests
-4. **Comprehensive test suite** - All test scenarios
+Follow the step-by-step plan in `IMPLEMENTATION_PLAN.md`:
+1. **CacheableModel** - Base class definition
+2. **Basic Operations** - In-memory put/get, validation, serialization
+3. **SQLite Integration** - Database connection, disk operations
+4. **Tracking & Metadata** - Counts, sizes, timestamps, schema versions
+5. **Statistics** - Hit/miss tracking, eviction counters, operation counters
+6. **Batch Operations** - Atomic multi-item operations
+7. **LRU Eviction** - Memory and disk eviction policies
+8. **Two-Tier Coordination** - Memory-disk integration, promotion, cascading
+9. **TTL & Advanced Features** - Expiration, custom timestamps, logging
+10. **Thread Safety & Polish** - Concurrency, edge cases, documentation
 
 ## Test Requirements
 
@@ -281,7 +392,7 @@ Removes all items from cache (both memory and disk). Blocks until complete.
 ## Example Usage
 
 ```python
-from pydantic_cache import Cache, CacheableModel
+from disk_backed_cache_example.disk_backed_cache import CacheableModel, DiskBackedCache
 
 # Define your model
 class User(CacheableModel):
@@ -291,15 +402,15 @@ class User(CacheableModel):
     age: int
 
 # Create cache
-cache = Cache(
-    db_path="./cache_data",
-    model_class=User,
+cache = DiskBackedCache(
+    db_path="./cache_data/user_cache.db",
+    model=User,
     max_memory_items=100,
     max_memory_size_bytes=1024 * 1024,  # 1MB
     max_disk_items=1000,
     max_disk_size_bytes=10 * 1024 * 1024,  # 10MB
-    memory_ttl_bytes=60.0,  # 1 minute
-    disk_ttl_bytes=3600.0,  # 1 hour
+    memory_ttl_seconds=60.0,  # 1 minute
+    disk_ttl_seconds=3600.0,  # 1 hour
     max_item_size_bytes=10 * 1024,  # 10KB
 )
 
@@ -313,11 +424,14 @@ if cached_user:
     print(f"Found user: {cached_user.name}")
 
 # Check existence
-if cache.contains("user:123"):
+if cache.exists("user:123"):
     print("User exists in cache")
 
 # Clear cache
 cache.clear()
+
+# Clean up
+cache.close()
 ```
 
 ## Edge Cases to Handle

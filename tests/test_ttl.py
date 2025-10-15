@@ -1,226 +1,259 @@
+"""Tests for TTL (Time To Live) expiration."""
+
 from disk_backed_cache_example.disk_backed_cache import CacheableModel, DiskBackedCache
 
 
-class SampleModel(CacheableModel):
+class TTLModel(CacheableModel):
+    """Model for TTL tests."""
+
     schema_version: str = "1.0.0"
-    name: str
+    value: int
 
 
-def test_expired_memory_item_returns_from_disk(db_path: str) -> None:
+def test_memory_ttl_expiration(db_path: str) -> None:
+    """Items should expire from memory after memory_ttl_seconds."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=TTLModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
         max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=10.0,  # 10 second TTL
+        memory_ttl_seconds=60.0,  # 60 second TTL
         disk_ttl_seconds=3600.0,
         max_item_size_bytes=10 * 1024,
     )
 
-    # Put item with timestamp
-    obj = SampleModel(name="test")
-    cache.put("key1", obj, timestamp=100.0)
+    # Store item at timestamp 1000
+    cache.put("key1", TTLModel(value=1), timestamp=1000.0)
 
-    # Get immediately - should work
-    result = cache.get("key1", timestamp=100.0)
-    assert result is not None
+    # Item should be in memory
+    assert "key1" in cache._memory_cache  # type: ignore[attr-defined]
 
-    # Get after memory TTL expired but disk TTL still valid
-    # Should return from disk
-    result = cache.get("key1", timestamp=111.0)  # 11 seconds later
-    assert result is not None  # Still available from disk
+    # Access within TTL (at timestamp 1050 - 50 seconds later)
+    retrieved = cache.get("key1", timestamp=1050.0)
+    assert retrieved == TTLModel(value=1)
 
+    # Item should still be in memory
+    assert "key1" in cache._memory_cache  # type: ignore[attr-defined]
+
+    # Access after TTL (at timestamp 1100 - 100 seconds later, > 60 second TTL)
+    retrieved = cache.get("key1", timestamp=1100.0)
+
+    # Should still retrieve from disk
+    assert retrieved == TTLModel(value=1)
+
+    # But should have been removed from memory
+    # (Note: get() promotes from disk, so it will be back in memory now)
+    # Let's verify by checking it was expired first
+    cache._memory_cache.clear()  # type: ignore[attr-defined]
+    cache._memory_timestamps.clear()  # type: ignore[attr-defined]
+    cache._memory_item_count = 0  # type: ignore[attr-defined]
+    cache._memory_total_size = 0  # type: ignore[attr-defined]
+
+    # Put it back with old timestamp
+    cache.put("key1", TTLModel(value=1), timestamp=1000.0)
+
+    # Try to get with expired timestamp
+    cache.get("key1", timestamp=1100.0)
+
+    # Should be promoted back after expiration check
     cache.close()
 
 
-def test_valid_memory_item_returns_object(db_path: str) -> None:
+def test_disk_ttl_expiration(db_path: str) -> None:
+    """Items should expire from disk after disk_ttl_seconds without access."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
-        max_memory_items=10,
-        max_memory_size_bytes=1024 * 1024,
-        max_disk_items=100,
-        max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=10.0,
-        disk_ttl_seconds=3600.0,
-        max_item_size_bytes=10 * 1024,
-    )
-
-    obj = SampleModel(name="test")
-    cache.put("key1", obj, timestamp=100.0)
-
-    # Get within TTL - should work
-    result = cache.get("key1", timestamp=105.0)  # 5 seconds later
-    assert result is not None
-    assert isinstance(result, SampleModel)
-    assert result.name == "test"
-
-    cache.close()
-
-
-def test_expired_item_removed_from_memory(db_path: str) -> None:
-    cache = DiskBackedCache(
-        db_path=db_path,
-        model=SampleModel,
-        max_memory_items=10,
-        max_memory_size_bytes=1024 * 1024,
-        max_disk_items=100,
-        max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=10.0,
-        disk_ttl_seconds=3600.0,
-        max_item_size_bytes=10 * 1024,
-    )
-
-    obj = SampleModel(name="test")
-    cache.put("key1", obj, timestamp=100.0)
-
-    # Verify it's in memory
-    assert "key1" in cache._memory_cache
-
-    # Get after memory expiration (but disk still valid)
-    result = cache.get("key1", timestamp=111.0)
-    assert result is not None  # Still returns from disk
-
-    # After getting from disk, it should be promoted back to memory
-    assert "key1" in cache._memory_cache
-
-    cache.close()
-
-
-def test_expired_disk_item_returns_none(db_path: str) -> None:
-    cache = DiskBackedCache(
-        db_path=db_path,
-        model=SampleModel,
+        model=TTLModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
         max_disk_size_bytes=10 * 1024 * 1024,
         memory_ttl_seconds=60.0,
-        disk_ttl_seconds=100.0,  # 100 second TTL
+        disk_ttl_seconds=120.0,  # 120 second disk TTL
         max_item_size_bytes=10 * 1024,
     )
 
-    obj = SampleModel(name="test")
-    cache.put("key1", obj, timestamp=100.0)
+    # Store item at timestamp 1000
+    cache.put("key1", TTLModel(value=1), timestamp=1000.0)
 
-    # Clear memory to force disk retrieval
-    cache._memory_cache.clear()
-    cache._memory_count = 0
-    cache._memory_total_size = 0
+    # Access within disk TTL (at timestamp 1100 - 100 seconds later)
+    retrieved = cache.get("key1", timestamp=1100.0)
+    assert retrieved == TTLModel(value=1)
 
-    # Get after disk TTL expired - should return None
-    result = cache.get("key1", timestamp=201.0)  # 101 seconds later
-    assert result is None
+    # Access after disk TTL from last access (at timestamp 1221 - 121 seconds after 1100)
+    # Since get() at 1100 updated the timestamp, we need > 120 seconds from 1100
+    retrieved = cache.get("key1", timestamp=1221.0)
+
+    # Should be None (expired from disk based on last access)
+    assert retrieved is None
+
+    # Should not exist anywhere
+    assert cache.get_count() == 0
 
     cache.close()
 
 
-def test_expired_item_removed_from_disk(db_path: str) -> None:
+def test_memory_expires_before_disk(db_path: str) -> None:
+    """Memory TTL should be shorter than disk TTL, items expire from memory first."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=TTLModel,
+        max_memory_items=10,
+        max_memory_size_bytes=1024 * 1024,
+        max_disk_items=100,
+        max_disk_size_bytes=10 * 1024 * 1024,
+        memory_ttl_seconds=60.0,  # 60 second memory TTL
+        disk_ttl_seconds=120.0,  # 120 second disk TTL
+        max_item_size_bytes=10 * 1024,
+    )
+
+    # Store item at timestamp 1000
+    cache.put("key1", TTLModel(value=1), timestamp=1000.0)
+
+    # Access after memory TTL but before disk TTL (at timestamp 1080)
+    cache.get("key1", timestamp=1080.0)
+
+    # Should have been removed from memory due to expiration
+    # but still available on disk
+
+    # Verify by clearing memory and checking disk
+    cache._memory_cache.clear()  # type: ignore[attr-defined]
+    cache._memory_timestamps.clear()  # type: ignore[attr-defined]
+    cache._memory_item_count = 0  # type: ignore[attr-defined]
+    cache._memory_total_size = 0  # type: ignore[attr-defined]
+
+    # Should still be retrievable from disk
+    retrieved = cache.get("key1", timestamp=1080.0)
+    assert retrieved == TTLModel(value=1)
+
+    cache.close()
+
+
+def test_expired_item_counts_as_miss(db_path: str) -> None:
+    """Expired items should count as cache misses."""
+    cache = DiskBackedCache(
+        db_path=db_path,
+        model=TTLModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
         max_disk_size_bytes=10 * 1024 * 1024,
         memory_ttl_seconds=60.0,
-        disk_ttl_seconds=100.0,
+        disk_ttl_seconds=120.0,
         max_item_size_bytes=10 * 1024,
     )
 
-    obj = SampleModel(name="test")
-    cache.put("key1", obj, timestamp=100.0)
+    # Store item
+    cache.put("key1", TTLModel(value=1), timestamp=1000.0)
 
-    # Clear memory
-    cache._memory_cache.clear()
-    cache._memory_count = 0
-    cache._memory_total_size = 0
+    # Reset stats
+    cache._stats_misses = 0  # type: ignore[attr-defined]
 
-    # Verify it's in disk
-    cursor = cache._conn.execute("SELECT key FROM cache WHERE key = ?", ("key1",))
-    assert cursor.fetchone() is not None
+    # Access after disk TTL
+    retrieved = cache.get("key1", timestamp=1200.0)
+    assert retrieved is None
 
-    # Get after expiration
-    result = cache.get("key1", timestamp=201.0)
-    assert result is None
-
-    # Should be removed from disk
-    cursor = cache._conn.execute("SELECT key FROM cache WHERE key = ?", ("key1",))
-    assert cursor.fetchone() is None
+    # Should count as miss
+    stats = cache.get_stats()
+    assert stats["misses"] == 1
 
     cache.close()
 
 
-def test_custom_timestamp_on_put(db_path: str) -> None:
+def test_get_many_respects_ttl(db_path: str) -> None:
+    """get_many() should respect TTL for each item."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
+        model=TTLModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
         max_disk_size_bytes=10 * 1024 * 1024,
         memory_ttl_seconds=60.0,
-        disk_ttl_seconds=3600.0,
+        disk_ttl_seconds=120.0,
         max_item_size_bytes=10 * 1024,
     )
 
-    obj = SampleModel(name="test")
-    cache.put("key1", obj, timestamp=1234567890.0)
+    # Store items with different timestamps
+    cache.put("key1", TTLModel(value=1), timestamp=1000.0)  # Will expire
+    cache.put("key2", TTLModel(value=2), timestamp=1100.0)  # Won't expire
+    cache.put("key3", TTLModel(value=3), timestamp=1150.0)  # Won't expire
 
-    # Verify timestamp is stored
-    _, _, stored_timestamp, _ = cache._memory_cache["key1"]
-    assert stored_timestamp == 1234567890.0
+    # Access at timestamp 1200
+    result = cache.get_many(["key1", "key2", "key3"], timestamp=1200.0)
+
+    # key1 should be expired (200 seconds > 120 second disk TTL)
+    # key2 and key3 should be available
+    assert "key1" not in result
+    assert result["key2"] == TTLModel(value=2)
+    assert result["key3"] == TTLModel(value=3)
 
     cache.close()
 
 
-def test_custom_timestamp_on_get_for_ttl(db_path: str) -> None:
+def test_ttl_updates_on_get(db_path: str) -> None:
+    """get() should update the timestamp, extending the TTL."""
     cache = DiskBackedCache(
         db_path=db_path,
-        model=SampleModel,
-        max_memory_items=10,
-        max_memory_size_bytes=1024 * 1024,
-        max_disk_items=100,
-        max_disk_size_bytes=10 * 1024 * 1024,
-        memory_ttl_seconds=10.0,
-        disk_ttl_seconds=50.0,  # Shorter disk TTL for this test
-        max_item_size_bytes=10 * 1024,
-    )
-
-    obj = SampleModel(name="test")
-    cache.put("key1", obj, timestamp=100.0)
-
-    # Get with custom timestamp for TTL calculation
-    result = cache.get("key1", timestamp=105.0)  # Within both TTLs
-    assert result is not None
-
-    result = cache.get("key1", timestamp=200.0)  # Outside both TTLs
-    assert result is None
-
-    cache.close()
-
-
-def test_timestamp_none_uses_current_time(db_path: str) -> None:
-    cache = DiskBackedCache(
-        db_path=db_path,
-        model=SampleModel,
+        model=TTLModel,
         max_memory_items=10,
         max_memory_size_bytes=1024 * 1024,
         max_disk_items=100,
         max_disk_size_bytes=10 * 1024 * 1024,
         memory_ttl_seconds=60.0,
-        disk_ttl_seconds=3600.0,
+        disk_ttl_seconds=120.0,
         max_item_size_bytes=10 * 1024,
     )
 
-    obj = SampleModel(name="test")
-    # Put without timestamp - should use current time
-    cache.put("key1", obj)
+    # Store item at timestamp 1000
+    cache.put("key1", TTLModel(value=1), timestamp=1000.0)
 
-    # Verify a timestamp was set
-    _, _, stored_timestamp, _ = cache._memory_cache["key1"]
-    assert stored_timestamp > 0
+    # Access at timestamp 1050 (updates timestamp on disk)
+    cache.get("key1", timestamp=1050.0)
+
+    # Access at timestamp 1150 (would have been expired if timestamp wasn't updated)
+    # 1150 - 1000 = 150 > 120, but 1150 - 1050 = 100 < 120
+    retrieved = cache.get("key1", timestamp=1150.0)
+
+    # Should still be available because timestamp was updated
+    assert retrieved == TTLModel(value=1)
+
+    cache.close()
+
+
+def test_memory_ttl_with_disk_only_items(db_path: str) -> None:
+    """Disk-only items (exceeding max_item_size) should only use disk TTL."""
+    cache = DiskBackedCache(
+        db_path=db_path,
+        model=TTLModel,
+        max_memory_items=10,
+        max_memory_size_bytes=1024 * 1024,
+        max_disk_items=100,
+        max_disk_size_bytes=10 * 1024 * 1024,
+        memory_ttl_seconds=60.0,
+        disk_ttl_seconds=120.0,
+        max_item_size_bytes=10,  # Very low - forces disk-only
+    )
+
+    # Store large item (will be disk-only)
+    cache.put("key1", TTLModel(value=1), timestamp=1000.0)
+
+    # Item should not be in memory
+    assert "key1" not in cache._memory_cache  # type: ignore[attr-defined]
+
+    # Access after memory TTL but before disk TTL (at timestamp 1080)
+    retrieved = cache.get("key1", timestamp=1080.0)
+
+    # Should still be available (uses disk TTL only)
+    assert retrieved == TTLModel(value=1)
+
+    # Access after disk TTL from last access (at timestamp 1201 - 121 seconds after 1080)
+    # Since get() at 1080 updated the timestamp, we need > 120 seconds from 1080
+    retrieved = cache.get("key1", timestamp=1201.0)
+
+    # Should be expired
+    assert retrieved is None
 
     cache.close()

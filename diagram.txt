@@ -1,0 +1,51 @@
+DISK-BACKED CACHE ARCHITECTURE
+===============================
+
+┌────────────────────────────────────────────────────────┐
+│                    APPLICATION                         │
+└────────────────────┬───────────────────────────────────┘
+                     │
+                     ▼
+         ┌───────────────────────────┐
+         │   IN-MEMORY CACHE         │
+         │   ───────────────────     │
+         │                           │
+         │   Fast, small, volatile   │
+         │                           │
+         │   • Python dict           │
+         │   • Live objects          │
+         └───────────┬───────────────┘
+                     │
+                     │
+                     ▼
+         ┌───────────────────────────┐
+         │   DISK CACHE.             │
+         │   ──────────────          │
+         │                           │
+         │   Slow, large, persistent │
+         │                           │
+         │   • SQLite database       │
+         │   • Serialized JSON       │
+         └───────────────────────────┘
+
+
+KEY RELATIONSHIPS:
+
+  Memory ⊂ Disk  (memory is a subset of disk)
+
+  • Every item in memory is also on disk
+  • Disk contains items NOT in memory (large items, evicted items)
+  • Disk is the source of truth
+  • Evicting from disk removes from both layers (CASCADE)
+  • Evicting from memory keeps on disk
+
+
+HIERARCHY:
+
+  Disk (L2) = PRIMARY STORAGE
+      ↑
+      └── Memory (L1) = HOT CACHE
+
+  • Disk backs memory
+  • Memory accelerates disk
+  • Disk controls what exists
