@@ -1,11 +1,21 @@
 {
   "permissions": {
+    "defaultMode": "acceptEdits",
     "allow": [
+      "Edit(*)",
+      "Write(*)",
+      "Bash(ls:*)",
       "Bash(command ls -la devtools/)",
       "Bash(./devtools/run_all_agent_validations.sh:*)",
-      "Bash(command git log --oneline -3)",
       "Bash(uv run pytest:*)",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m:*)",
+      "Bash(git add -A && git commit -m:*)",
+      "Bash(git add :* && git commit -m:*)"
     ],
     "deny": [],
     "ask": []

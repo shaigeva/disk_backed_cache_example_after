@@ -35,6 +35,9 @@ node_modules/
 tasks.json
 .taskmaster/tasks 
 
+# tests
+.testmondata
+
 # Don't accidentally leak API keys
 .cursor/mcp.json 
 
@@ -47,3 +50,4 @@ tasks.json
 
 # don't include the sqlite database
 *.db
+
